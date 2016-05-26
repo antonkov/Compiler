@@ -71,7 +71,7 @@ object Parser {
     LLVMRunPassManager(pass, mod)
     LLVMDumpModule(mod)
 
-    val exec_args: LLVM.LLVMGenericValueRef = LLVMCreateGenericValueOfInt(LLVMInt32Type, 10, 0)
+    val exec_args: LLVM.LLVMGenericValueRef = LLVMCreateGenericValueOfInt(LLVMInt32Type, 3, 0)
     val exec_res: LLVM.LLVMGenericValueRef = LLVMRunFunction(engine, fac, 1, exec_args)
     System.err.println
     System.err.println("; Running fac(10) with JIT...")
