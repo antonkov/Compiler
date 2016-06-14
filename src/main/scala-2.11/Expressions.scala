@@ -9,17 +9,29 @@ trait Expressions extends JavaTokenParsers {
 
   class ExpressionNode {}
 
-  class AdditiveExpressionNode(left: MultiplicativeExpressionNode, operator: Option[Operator] = None, right: Option[AdditiveExpressionNode] = None) extends ExpressionNode {
-    override def toString = operator match {
-      case Some(op) => s"($left ${op.symbol} ${right.get})"
-      case None => s"$left"
+  class BinaryOperatorNode(left: ExpressionNode, operator: Operator, right: ExpressionNode) extends ExpressionNode {
+    override def toString = s"($left ${operator.symbol} $right)"
+  }
+
+  class UnaryOperatorNode(child: ExpressionNode, operator: Operator) extends ExpressionNode {
+    override def toString = s"${operator.symbol}$child"
+  }
+
+  class AssignmentExpressionNode(leftSideExpressions: List[ExpressionNode], expr: ExpressionNode) extends ExpressionNode {
+    override def toString = {
+      var s = ""
+      for (node <- leftSideExpressions) {
+        s += node + " = "
+      }
+      s += expr
+      s
     }
   }
 
-  class MultiplicativeExpressionNode(left: UnaryExpressionNode, operator: Option[Operator] = None, right: Option[MultiplicativeExpressionNode] = None) extends ExpressionNode {
-    override def toString = operator match {
-      case Some(op) => s"($left ${op.symbol} ${right.get})"
-      case None => s"$left"
+  class ConditionalExpressionNode(condition: ExpressionNode, actions: Option[(ExpressionNode, ExpressionNode)]) extends ExpressionNode {
+    override def toString = actions match {
+      case Some((trueAction, falseAction)) => s"(${condition} ? ${trueAction} : ${falseAction})"
+      case None => s"$condition"
     }
   }
 
@@ -39,6 +51,10 @@ trait Expressions extends JavaTokenParsers {
     override def toString = number.toString
   }
 
+  case class IdentifierNode(name: String) extends SimpleExpressionNode {
+    override def toString = name
+  }
+
   case class ParenthesizedExpressionNode(child: ExpressionNode) extends SimpleExpressionNode {
     override def toString = s"($child)"
   }
@@ -48,31 +64,34 @@ trait Expressions extends JavaTokenParsers {
 
   def Number: Parser[NumberNode] = floatingPointNumber ^^ { case number => new NumberNode(number.toString.toDouble) }
 
+  def Identifier: Parser[IdentifierNode] = ident ^^ { case identifier => new IdentifierNode(identifier.toString) }
+
   // Expressions
 
-  def Expression: Parser[Any] = AssignmentExpression
+  def Expression: Parser[ExpressionNode] = AssignmentExpression
 
   // Primary Expressions
 
-  def PrimaryExpression: Parser[PrimaryExpressionNode] = SimpleExpression
+  def PrimaryExpression = SimpleExpression
 
-  def SimpleExpression = Number | ParenthesizedExpression
+  def SimpleExpression = Number | Identifier | ParenthesizedExpression
 
   def ParenthesizedExpression = "(" ~> Expression <~ ")" ^^ {
-    case (child: ExpressionNode) => new ParenthesizedExpressionNode(child)
+    case (child: ExpressionNode) => child
   }
 
   // Conditional Operators
 
-  def ConditionalExpression = ternaryOperator | LogicalOrExpression
-
-  def ternaryOperator = LogicalOrExpression ~ "?" ~ AssignmentExpression ~ ":" ~ AssignmentExpression
+  def ConditionalExpression: Parser[ExpressionNode] = LogicalOrExpression ~ opt("?" ~ AssignmentExpression ~ ":" ~ AssignmentExpression) ^^ {
+    case expr ~ Some("?" ~ trueAction ~ ":" ~ falseAction) => new ConditionalExpressionNode(expr, Some((trueAction, falseAction)))
+    case expr ~ None => new ConditionalExpressionNode(expr, None)
+  }
 
   // Assignment Operators
 
-  def AssignmentExpression: Parser[Any] = assignment | ConditionalExpression
-
-  def assignment: Parser[Any] = LeftSideExpression ~ "=" ~ AssignmentExpression
+  def AssignmentExpression: Parser[ExpressionNode] = rep(LeftSideExpression <~ "=") ~ ConditionalExpression ^^ {
+    case leftSides ~ condition => new AssignmentExpressionNode(leftSides, condition)
+  }
 
   // Left-Side expressions
 
@@ -88,92 +107,84 @@ trait Expressions extends JavaTokenParsers {
 
   // Equality Operators
 
-  def EqualityExpression: Parser[Any] = equalValue | notEqualValue | RelationalExpression
-
-  def equalValue = RelationalExpression ~ "==" ~ EqualityExpression
-
-  def notEqualValue = RelationalExpression ~ "!=" ~ EqualityExpression
+  def EqualityExpression: Parser[ExpressionNode] = RelationalExpression ~ rep(("==" | "!=") ~ RelationalExpression) ^^ {
+    case x ~ xs => xs.foldLeft(x) {
+      case (x, "==" ~ y) => new BinaryOperatorNode(x, Operator.EQUAL_VALUE, y)
+      case (x, "!=" ~ y) => new BinaryOperatorNode(x, Operator.NOT_EQUAL_VALUE, y)
+    }
+  }
 
   // Relational Operators
 
-  def RelationalExpression: Parser[Any] = lower | greater | lowerEqual | greaterEqual | ShiftExpression
-
-  def lower = ShiftExpression ~ "<" ~ RelationalExpression
-
-  def greater = ShiftExpression ~ ">" ~ RelationalExpression
-
-  def lowerEqual = ShiftExpression ~ "<=" ~ RelationalExpression
-
-  def greaterEqual = ShiftExpression ~ ">=" ~ RelationalExpression
+  def RelationalExpression: Parser[ExpressionNode] = ShiftExpression ~ rep(("<" | ">" | "<=" | ">=") ~ ShiftExpression) ^^ {
+    case x ~ xs => xs.foldLeft(x) {
+      case (x, "<" ~ y) => new BinaryOperatorNode(x, Operator.LOWER, y)
+      case (x, ">" ~ y) => new BinaryOperatorNode(x, Operator.GREATER, y)
+      case (x, "<=" ~ y) => new BinaryOperatorNode(x, Operator.LOWER_EQUAL, y)
+      case (x, ">=" ~ y) => new BinaryOperatorNode(x, Operator.GREATER_EQUAL, y)
+    }
+  }
 
   // Binary Shift Operators
 
-  def ShiftExpression: Parser[Any] = shiftLeft | shiftRight | arithmeticShiftRight | AdditiveExpression
-
-  def shiftLeft = AdditiveExpression ~ "<<" ~ ShiftExpression
-
-  def shiftRight = AdditiveExpression ~ ">>" ~ ShiftExpression
-
-  def arithmeticShiftRight = AdditiveExpression ~ ">>>" ~ ShiftExpression
-
+  def ShiftExpression: Parser[ExpressionNode] = AdditiveExpression ~ rep(("<<" | ">>" | ">>>") ~ AdditiveExpression) ^^ {
+    case x ~ xs => xs.foldLeft(x) {
+      case (x, "<<" ~ y) => new BinaryOperatorNode(x, Operator.SHIFT_LEFT, y)
+      case (x, ">>" ~ y) => new BinaryOperatorNode(x, Operator.SHIFT_RIGHT, y)
+      case (x, ">>>" ~ y) => new BinaryOperatorNode(x, Operator.ARITHMETIC_SHIFT_RIGHT, y)
+    }
+  }
 
   // Additive Operators
 
-  def AdditiveExpression: Parser[AdditiveExpressionNode] = addition | subtraction | singleMultiplicativeExpression
-
-  def singleMultiplicativeExpression: Parser[AdditiveExpressionNode] = MultiplicativeExpression ^^ {
-    case child: MultiplicativeExpressionNode => new AdditiveExpressionNode(child, None, None)
-  }
-
-  def addition: Parser[AdditiveExpressionNode] = MultiplicativeExpression ~ "+" ~ AdditiveExpression ^^ {
-    case left ~ "+" ~ right => new AdditiveExpressionNode(left, Some(Operator.PLUS), Some(right))
-  }
-
-  def subtraction: Parser[AdditiveExpressionNode] = MultiplicativeExpression ~ "-" ~ AdditiveExpression ^^ {
-    case left ~ "-" ~ right => new AdditiveExpressionNode(left, Some(Operator.MINUS), Some(right))
+  def AdditiveExpression: Parser[ExpressionNode] = MultiplicativeExpression ~ rep(("+" | "-") ~ MultiplicativeExpression) ^^ {
+    case x ~ xs => xs.foldLeft(x) {
+      case (x, "+" ~ y) => new BinaryOperatorNode(x, Operator.PLUS, y)
+      case (x, "-" ~ y) => new BinaryOperatorNode(x, Operator.MINUS, y)
+    }
   }
 
   // Multiplicative Operators
 
-  def MultiplicativeExpression: Parser[MultiplicativeExpressionNode] = multiplication | division | modulo | unaryExpression
-
-  def unaryExpression: Parser[MultiplicativeExpressionNode] = UnaryExpression ^^ {
-    case child => new MultiplicativeExpressionNode(child, None, None)
-  }
-
-  def multiplication: Parser[MultiplicativeExpressionNode] = UnaryExpression ~ "*" ~ MultiplicativeExpression ^^ {
-    case left ~ "*" ~ right => new MultiplicativeExpressionNode(left, Some(Operator.MULTIPLY), Some(right))
-  }
-
-  def division: Parser[MultiplicativeExpressionNode] = UnaryExpression ~ "/" ~ MultiplicativeExpression ^^ {
-    case left ~ "/" ~ right => new MultiplicativeExpressionNode(left, Some(Operator.DIVIDE), Some(right))
-  }
-
-  def modulo: Parser[MultiplicativeExpressionNode] = UnaryExpression ~ "%" ~ MultiplicativeExpression ^^ {
-    case left ~ "%" ~ right => new MultiplicativeExpressionNode(left, Some(Operator.MODULO), Some(right))
+  def MultiplicativeExpression: Parser[ExpressionNode] = UnaryExpression ~ rep(("*" | "/" | "%") ~ UnaryExpression) ^^ {
+    case x ~ xs => xs.foldLeft(x) {
+      case (x, "*" ~ y) => new BinaryOperatorNode(x, Operator.MULTIPLY, y)
+      case (x, "/" ~ y) => new BinaryOperatorNode(x, Operator.DIVIDE, y)
+      case (x, "%" ~ y) => new BinaryOperatorNode(x, Operator.MODULO, y)
+    }
   }
 
   // Binary Logical Operators
 
-  def LogicalAndExpression: Parser[Any] = logicalAnd | BitwiseOrExpression
+  def LogicalAndExpression: Parser[ExpressionNode] = BitwiseOrExpression ~ rep("&&" ~ BitwiseOrExpression) ^^ {
+    case x ~ xs => xs.foldLeft(x) {
+      case (x, "&&" ~ y) => new BinaryOperatorNode(x, Operator.PLUS, y)
+    }
+  }
 
-  def logicalAnd = BitwiseOrExpression ~ "&&" ~ LogicalAndExpression
-
-  def LogicalOrExpression: Parser[Any] = logicalOr | LogicalAndExpression
-
-  def logicalOr = LogicalAndExpression ~ "||" ~ LogicalOrExpression
+  def LogicalOrExpression: Parser[ExpressionNode] = LogicalAndExpression ~ rep("||" ~ LogicalAndExpression) ^^ {
+    case x ~ xs => xs.foldLeft(x) {
+      case (x, "||" ~ y) => new BinaryOperatorNode(x, Operator.LOGICAL_OR, y)
+    }
+  }
 
   // Binary Bitwise Operators
 
-  def BitwiseAndExpression: Parser[Any] = bitwiseAnd | EqualityExpression
+  def BitwiseAndExpression: Parser[ExpressionNode] = EqualityExpression ~ rep("&" ~ EqualityExpression) ^^ {
+    case x ~ xs => xs.foldLeft(x) {
+      case (x, "&" ~ y) => new BinaryOperatorNode(x, Operator.BITWISE_AND, y)
+    }
+  }
 
-  def bitwiseAnd = EqualityExpression ~ "&" ~ BitwiseAndExpression
+  def BitwiseXorExpression: Parser[ExpressionNode] = BitwiseAndExpression ~ rep("^" ~ BitwiseAndExpression) ^^ {
+    case x ~ xs => xs.foldLeft(x) {
+      case (x, "^" ~ y) => new BinaryOperatorNode(x, Operator.BITWISE_XOR, y)
+    }
+  }
 
-  def BitwiseXorExpression: Parser[Any] = bitwiseXor | BitwiseAndExpression
-
-  def bitwiseXor = BitwiseAndExpression ~ "^" ~ BitwiseXorExpression
-
-  def BitwiseOrExpression: Parser[Any] = bitwiseOr | BitwiseXorExpression
-
-  def bitwiseOr = BitwiseXorExpression ~ "|" ~ BitwiseOrExpression
+  def BitwiseOrExpression: Parser[ExpressionNode] = BitwiseXorExpression ~ rep("|" ~ BitwiseXorExpression) ^^ {
+    case x ~ xs => xs.foldLeft(x) {
+      case (x, "|" ~ y) => new BinaryOperatorNode(x, Operator.BITWISE_OR, y)
+    }
+  }
 }
