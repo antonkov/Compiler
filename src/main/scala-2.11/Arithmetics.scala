@@ -8,7 +8,7 @@ case class Number(value: Double) extends Expression {
   override def calc() = value
 }
 
-case class Add(x: Expression, y: Expression) extends Expression {
+case class Sum(x: Expression, y: Expression) extends Expression {
   override def calc() = x.calc() + y.calc()
 }
 
@@ -24,15 +24,15 @@ case class Div(x: Expression, y: Expression) extends Expression {
   override def calc() = x.calc() / y.calc()
 }
 
-class Arith extends JavaTokenParsers {
-  def expr: Parser[Expression] = term~rep("+"~term | "-"~term) ^^ {
+class Arithmetics extends JavaTokenParsers {
+  def expr: Parser[Expression] = term ~ rep("+" ~ term | "-" ~ term) ^^ {
     case op ~ list => list.foldLeft(op) {
-      case (x, "+" ~ y) => Add(x, y)
+      case (x, "+" ~ y) => Sum(x, y)
       case (x, "-" ~ y) => Sub(x, y)
     }
   }
 
-  def term: Parser[Expression] = factor~rep("*"~factor | "/"~factor) ^^ {
+  def term: Parser[Expression] = factor ~ rep("*" ~ factor | "/" ~ factor) ^^ {
     case op ~ list => list.foldLeft(op) {
       case (x, "*" ~ y) => Mul(x, y)
       case (x, "/" ~ y) => Div(x, y)
