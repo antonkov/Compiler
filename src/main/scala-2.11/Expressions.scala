@@ -1,4 +1,4 @@
-import sun.tools.tree.UnaryExpression
+import sun.tools.tree.{ConditionalExpression, UnaryExpression}
 
 import scala.util.parsing.combinator.JavaTokenParsers
 
@@ -7,11 +7,21 @@ import scala.util.parsing.combinator.JavaTokenParsers
   */
 trait Expressions extends JavaTokenParsers {
 
-  class ExpressionNode
+  class ExpressionNode {}
 
-  class AdditiveExpressionNode(left: MultiplicativeExpressionNode, operator: Option[Operator] = None, right: Option[AdditiveExpressionNode] = None) extends ExpressionNode
+  class AdditiveExpressionNode(left: MultiplicativeExpressionNode, operator: Option[Operator] = None, right: Option[AdditiveExpressionNode] = None) extends ExpressionNode {
+    override def toString = operator match {
+      case Some(op) => s"($left ${op.symbol} ${right.get})"
+      case None => s"$left"
+    }
+  }
 
-  class MultiplicativeExpressionNode(left: UnaryExpressionNode, operator: Option[Operator] = None, right: Option[MultiplicativeExpressionNode] = None) extends ExpressionNode
+  class MultiplicativeExpressionNode(left: UnaryExpressionNode, operator: Option[Operator] = None, right: Option[MultiplicativeExpressionNode] = None) extends ExpressionNode {
+    override def toString = operator match {
+      case Some(op) => s"($left ${op.symbol} ${right.get})"
+      case None => s"$left"
+    }
+  }
 
   class UnaryExpressionNode extends ExpressionNode {}
 
@@ -25,9 +35,13 @@ trait Expressions extends JavaTokenParsers {
 
   sealed class SimpleExpressionNode extends PrimaryExpressionNode {}
 
-  case class NumberNode(number: Double) extends SimpleExpressionNode
+  case class NumberNode(number: Double) extends SimpleExpressionNode {
+    override def toString = number.toString
+  }
 
-  case class ParenthesizedExpressionNode(child: ExpressionNode) extends SimpleExpressionNode
+  case class ParenthesizedExpressionNode(child: ExpressionNode) extends SimpleExpressionNode {
+    override def toString = s"($child)"
+  }
 
 
   // Base Parsers
@@ -50,13 +64,13 @@ trait Expressions extends JavaTokenParsers {
 
   // Conditional Operators
 
-  def ConditionalExpression = LogicalOrExpression | ternaryOperator
+  def ConditionalExpression = ternaryOperator | LogicalOrExpression
 
   def ternaryOperator = LogicalOrExpression ~ "?" ~ AssignmentExpression ~ ":" ~ AssignmentExpression
 
   // Assignment Operators
 
-  def AssignmentExpression: Parser[Any] = ConditionalExpression | assignment
+  def AssignmentExpression: Parser[Any] = assignment | ConditionalExpression
 
   def assignment: Parser[Any] = LeftSideExpression ~ "=" ~ AssignmentExpression
 
@@ -74,7 +88,7 @@ trait Expressions extends JavaTokenParsers {
 
   // Equality Operators
 
-  def EqualityExpression: Parser[Any] = RelationalExpression | equalValue | notEqualValue
+  def EqualityExpression: Parser[Any] = equalValue | notEqualValue | RelationalExpression
 
   def equalValue = RelationalExpression ~ "==" ~ EqualityExpression
 
@@ -82,19 +96,19 @@ trait Expressions extends JavaTokenParsers {
 
   // Relational Operators
 
-  def RelationalExpression: Parser[Any] = lower | greater | lowerEqual | greaterEqual
+  def RelationalExpression: Parser[Any] = lower | greater | lowerEqual | greaterEqual | ShiftExpression
 
-  def lower = RelationalExpression ~ "<" ~ ShiftExpression
+  def lower = ShiftExpression ~ "<" ~ RelationalExpression
 
-  def greater = RelationalExpression ~ ">" ~ ShiftExpression
+  def greater = ShiftExpression ~ ">" ~ RelationalExpression
 
-  def lowerEqual = RelationalExpression ~ "<=" ~ ShiftExpression
+  def lowerEqual = ShiftExpression ~ "<=" ~ RelationalExpression
 
-  def greaterEqual = RelationalExpression ~ ">=" ~ ShiftExpression
+  def greaterEqual = ShiftExpression ~ ">=" ~ RelationalExpression
 
   // Binary Shift Operators
 
-  def ShiftExpression: Parser[Any] = AdditiveExpression | shiftLeft | shiftRight | arithmeticShiftRight
+  def ShiftExpression: Parser[Any] = shiftLeft | shiftRight | arithmeticShiftRight | AdditiveExpression
 
   def shiftLeft = AdditiveExpression ~ "<<" ~ ShiftExpression
 
@@ -105,9 +119,9 @@ trait Expressions extends JavaTokenParsers {
 
   // Additive Operators
 
-  def AdditiveExpression: Parser[AdditiveExpressionNode] = multiplicativeExpression | addition | subtraction
+  def AdditiveExpression: Parser[AdditiveExpressionNode] = addition | subtraction | singleMultiplicativeExpression
 
-  def multiplicativeExpression: Parser[AdditiveExpressionNode] = MultiplicativeExpression ^^ {
+  def singleMultiplicativeExpression: Parser[AdditiveExpressionNode] = MultiplicativeExpression ^^ {
     case child: MultiplicativeExpressionNode => new AdditiveExpressionNode(child, None, None)
   }
 
@@ -121,7 +135,7 @@ trait Expressions extends JavaTokenParsers {
 
   // Multiplicative Operators
 
-  def MultiplicativeExpression: Parser[MultiplicativeExpressionNode] = unaryExpression | multiplication | division | modulo
+  def MultiplicativeExpression: Parser[MultiplicativeExpressionNode] = multiplication | division | modulo | unaryExpression
 
   def unaryExpression: Parser[MultiplicativeExpressionNode] = UnaryExpression ^^ {
     case child => new MultiplicativeExpressionNode(child, None, None)
@@ -141,25 +155,25 @@ trait Expressions extends JavaTokenParsers {
 
   // Binary Logical Operators
 
-  def LogicalAndExpression: Parser[Any] = BitwiseOrExpression | logicalAnd
+  def LogicalAndExpression: Parser[Any] = logicalAnd | BitwiseOrExpression
 
   def logicalAnd = BitwiseOrExpression ~ "&&" ~ LogicalAndExpression
 
-  def LogicalOrExpression: Parser[Any] = LogicalAndExpression | logicalOr
+  def LogicalOrExpression: Parser[Any] = logicalOr | LogicalAndExpression
 
   def logicalOr = LogicalAndExpression ~ "||" ~ LogicalOrExpression
 
   // Binary Bitwise Operators
 
-  def BitwiseAndExpression: Parser[Any] = EqualityExpression | bitwiseAnd
+  def BitwiseAndExpression: Parser[Any] = bitwiseAnd | EqualityExpression
 
   def bitwiseAnd = EqualityExpression ~ "&" ~ BitwiseAndExpression
 
-  def BitwiseXorExpression: Parser[Any] = BitwiseAndExpression | bitwiseXor
+  def BitwiseXorExpression: Parser[Any] = bitwiseXor | BitwiseAndExpression
 
   def bitwiseXor = BitwiseAndExpression ~ "^" ~ BitwiseXorExpression
 
-  def BitwiseOrExpression: Parser[Any] = BitwiseXorExpression | bitwiseOr
+  def BitwiseOrExpression: Parser[Any] = bitwiseOr | BitwiseXorExpression
 
   def bitwiseOr = BitwiseXorExpression ~ "|" ~ BitwiseOrExpression
 }
